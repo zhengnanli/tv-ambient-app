@@ -1,0 +1,669 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambient Dashboard</title>
+<style>
+  /* Dim text is a solid gray, not translucent white: a shadow behind translucent glyphs
+     shows through them and reads as a smudge. */
+  :root { --fg: #fff; --dim: #d8d8d8; --shadow: 0 .05vw .3vw rgba(0,0,0,.45); }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  body { font-family: Roboto, "Google Sans", sans-serif; color: var(--fg); text-shadow: var(--shadow); }
+  .bg { position: absolute; inset: 0; background: #000 center/cover no-repeat; opacity: 0; transition: opacity 2.5s ease; }
+  .bg.on { opacity: 1; animation: drift 75s linear forwards; }
+  @keyframes drift { from { transform: scale(1.0) translate(0, 0); } to { transform: scale(1.09) translate(-1.2%, -.8%); } }
+  .scrim { position: absolute; inset: 0; pointer-events: none;
+    /* Top band darkens behind the agenda and clock and eases out over the top half;
+       the stops approximate an ease-out curve so there is no visible edge. */
+    background:
+      linear-gradient(to bottom, rgba(0,0,0,.75) 0%, rgba(0,0,0,.6) 10%, rgba(0,0,0,.42) 20%,
+        rgba(0,0,0,.25) 30%, rgba(0,0,0,.11) 40%, rgba(0,0,0,.03) 48%, rgba(0,0,0,0) 55%),
+      linear-gradient(to top, rgba(0,0,0,.3), rgba(0,0,0,0) 28%); }
+  #ui { position: absolute; inset: 0; transition: transform 4s ease; }
+  .label { font-size: 1.15vw; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); font-weight: 500; }
+
+  #agenda { position: absolute; left: 4vw; top: 4vw; max-width: 46vw; }
+  #agenda .label { margin-bottom: .6vw; }
+  #events { display: grid; grid-template-columns: auto 1fr; column-gap: 1.8vw; row-gap: .35vw; font-size: 1.75vw; }
+  #events .t { white-space: nowrap; color: var(--dim); }
+  #events .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #events .past { opacity: .5; }
+  /* The event happening now: a white bar at its left, "Now" for a time, and its end time. */
+  #events .t.now { position: relative; color: #fff; font-weight: 500; }
+  #events .t.now::before { content: ''; position: absolute; left: -1.1vw; top: .18em; bottom: .18em; width: .28vw;
+    border-radius: .2vw; background: #fff; box-shadow: 0 0 .4vw rgba(0,0,0,.45); }
+  #events .s.now { font-weight: 500; }
+  #events .until { margin-left: .7vw; font-size: .82em; font-weight: 400; color: var(--dim); }
+
+  #clockbox { position: absolute; right: 4vw; top: 3vw; text-align: right; }
+  #clock { font-size: 7vw; font-weight: 200; line-height: 1; letter-spacing: -.02em; }
+  #date { font-size: 1.65vw; margin-top: .5vw; }
+  #weather { font-size: 1.5vw; margin-top: .35vw; color: var(--dim); }
+
+  #hourly { display: flex; justify-content: flex-end; gap: 1.1vw; margin-top: 1.1vw; }
+  .hr { width: 3.6vw; text-align: center; font-size: 1.2vw; font-weight: 500; }
+  .hr .h { font-size: 1vw; font-weight: 400; }
+  .hr svg { display: block; width: 2.1vw; height: 2.1vw; margin: .35vw auto; filter: drop-shadow(0 0 .3vw rgba(0,0,0,.75)); }
+  .hr .p { color: #9fd8ff; font-size: .9vw; min-height: 1.1vw; }
+  #sun { font-size: 1.05vw; color: var(--dim); margin-top: .5vw; }
+
+  #caption { position: absolute; right: 4vw; bottom: 3.4vw; text-align: right; font-size: 1.15vw; }
+  #credit { font-size: .85vw; color: var(--dim); margin-top: .2vw; }
+
+  #alerts { position: absolute; left: 4vw; bottom: 3.4vw; max-width: 52vw; display: flex; flex-direction: column; gap: .7vw; text-shadow: none; }
+  .alert { display: flex; gap: 1.1vw; align-items: flex-start; padding: .9vw 1.4vw .95vw 1.1vw; border-radius: .7vw;
+    background: rgba(0,0,0,.55); border-left: .35vw solid #fbc02d; }
+  .alert svg { flex: none; width: 2.2vw; height: 2.2vw; margin-top: .1vw; }
+  .alert .ev { font-size: 1.35vw; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .alert .when { font-size: 1.05vw; opacity: .9; margin-top: .1vw; }
+  .alert .hl { font-size: 1.05vw; margin-top: .35vw; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .alert.watch { background: rgba(191,54,12,.92); border-left-color: #ffab40; }
+  .alert.warning { background: rgba(183,28,28,.94); border-left-color: #fff; animation: pulse 2.4s ease-in-out infinite; }
+  .alert.warning .ev { font-size: 1.9vw; }
+  @keyframes pulse { 50% { box-shadow: 0 0 2.2vw rgba(255,60,60,.75); } }
+
+  /* Night: photo and agenda go away, a dim clock is all that's left. Alerts still show. */
+  .bg, .scrim, #agenda, #hourly, #sun, #caption { transition: opacity 3s ease; }
+  body.night .bg.on, body.night .scrim, body.night #agenda, body.night #hourly, body.night #sun, body.night #caption { opacity: 0; }
+  body.night #clockbox { opacity: .4; }
+  body.night #clock, body.night #date, body.night #weather { color: #aaa; text-shadow: none; }
+
+  #menu { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.45); text-shadow: none; }
+  #menu[hidden], #hint[hidden] { display: none; }
+  .panel { width: 44vw; padding: 2.2vw 2.4vw 1.8vw; border-radius: 1.2vw; background: rgba(22,24,28,.94); }
+  .mtitle { font-size: 2.2vw; font-weight: 500; margin: 0 1.2vw 1.4vw; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: .9vw 1.2vw;
+    border-radius: .7vw; font-size: 1.5vw; }
+  .row .val { color: #b8b8b8; }
+  .row.sel { background: #f2f2f2; color: #111; }
+  .row.sel .val { color: #111; }
+  .row.sel .val::before { content: '\2039\00a0\00a0'; }
+  .row.sel .val::after { content: '\00a0\00a0\203a'; }
+  .mhint { font-size: 1.05vw; color: #9a9a9a; margin: 1.4vw 1.2vw 0; }
+  #hint { position: absolute; left: 50%; bottom: 3.4vw; transform: translateX(-50%); padding: .7vw 1.4vw;
+    border-radius: 2vw; background: rgba(0,0,0,.55); font-size: 1.15vw; text-shadow: none; transition: opacity 1s; }
+</style>
+</head>
+<body>
+<div class="bg" id="bg0"></div>
+<div class="bg" id="bg1"></div>
+<div class="scrim"></div>
+<div id="ui">
+  <div id="agenda"><div class="label" id="agendaLabel"></div><div id="events"></div></div>
+  <div id="clockbox"><div id="clock"></div><div id="date"></div><div id="weather"></div><div id="hourly"></div><div id="sun"></div></div>
+  <div id="caption"><div id="place"></div><div id="credit"></div></div>
+  <div id="alerts"></div>
+</div>
+<div id="hint" hidden>Press OK for settings</div>
+<div id="menu" hidden><div class="panel">
+  <div class="mtitle">Settings</div><div id="rows"></div>
+  <div class="mhint">▲▼ choose · ◀▶ change · BACK saves and closes</div>
+</div></div>
+<script>
+'use strict';
+const DEFAULTS = {
+  lat: null, lon: null,             // required for weather and alerts
+  icsUrls: [],                      // Outlook "published calendar" ICS links
+  unsplashKey: '',                  // empty -> Bing photo of the day
+  // Unsplash searches by time of day; each slot runs from its hour until the next slot's.
+  themes: [
+    { from: 5, queries: ['sunrise landscape', 'misty morning mountains', 'morning lake reflection'] },
+    { from: 11, queries: ['landscape nature', 'mountain lake', 'coastline aerial', 'forest valley'] },
+    { from: 17, queries: ['sunset landscape', 'golden hour mountains', 'sunset coast'] },
+    { from: 20, queries: ['city skyline night', 'night sky stars landscape', 'blue hour city'] },
+  ],
+  units: 'C',                       // 'C' or 'F'
+  photoSeconds: 60,
+  night: '23-6',                    // 'start-end' hours, clock-only and dimmed between; 'off'
+  photoSource: 'unsplash',          // 'unsplash' (needs unsplashKey) or 'bing'
+  clock24: false,
+  forceNight: false, demoAlerts: false, demoEvents: false,  // for testing and screenshots, via debug.json
+};
+let CFG = DEFAULTS;
+const readCfg = name => { try { return JSON.parse(window.Android ? Android.config(name) : '{}'); } catch (e) { return {}; } };
+CFG = Object.assign({}, DEFAULTS, readCfg('config.json'), readCfg('settings'), readCfg('debug.json'));
+const UNSPLASH = !!CFG.unsplashKey && CFG.photoSource === 'unsplash';
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+
+// Network goes through the native bridge so CORS never applies.
+let nextId = 1; const pending = {};
+window.__fetched = (id, ok, body) => { const p = pending[id]; delete pending[id]; if (p) ok ? p.res(body) : p.rej(new Error(body)); };
+function bridge(method, url) {
+  return new Promise((res, rej) => { const id = nextId++; pending[id] = { res, rej }; Android[method](id, url); });
+}
+function get(url) {
+  if (!window.Android) return fetch(url).then(r => r.ok ? r.text() : Promise.reject(new Error(r.status)));
+  return bridge('fetch', url);
+}
+// Resolves to a URL the page can display: a cached file on the TV, the original in a desktop browser.
+const localImage = url => window.Android ? bridge('cacheImage', url) : Promise.resolve(url);
+
+// ---------- clock ----------
+const fmtTime = d => d.toLocaleTimeString('en-US', CFG.clock24
+  ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } : { hour: 'numeric', minute: '2-digit' });
+function tickClock() {
+  const now = new Date();
+  $('clock').textContent = fmtTime(now).replace(/\s?[AP]M$/, '');
+  $('date').textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+// ---------- weather (Open-Meteo, no key) ----------
+const WMO = { 0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 56: 'Freezing drizzle', 57: 'Freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 66: 'Freezing rain', 67: 'Freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains', 80: 'Showers', 81: 'Showers',
+  82: 'Heavy showers', 85: 'Snow showers', 86: 'Snow showers', 95: 'Thunderstorms', 96: 'Thunderstorms', 99: 'Thunderstorms' };
+// Line icons on a 24-unit grid, stroked in currentColor.
+const CLOUD = 'M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 7 18z';
+const CLOUD_HI = 'M7 14h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 7 3.5 3.5 0 0 0 7 14z';
+const ICON = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+  moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.3 6.3 0 0 0 10 10z"/>',
+  partSun: '<circle cx="8.5" cy="8" r="3"/><path d="M8.5 2.3v1.2M2.8 8H4M4.5 4l.9.9M12.5 4l-.9.9"/><path d="M9 20h8.5a3.5 3.5 0 0 0 .4-7A5 5 0 0 0 8.3 14 3 3 0 0 0 9 20z"/>',
+  partMoon: '<path d="M12 6.8A4.4 4.4 0 1 1 6.6 2.6a3.4 3.4 0 0 0 5.4 4.2z"/><path d="M9 20h8.5a3.5 3.5 0 0 0 .4-7A5 5 0 0 0 8.3 14 3 3 0 0 0 9 20z"/>',
+  cloud: `<path d="${CLOUD}"/>`,
+  fog: '<path d="M4 9h16M6 13h12M4 17h16"/>',
+  rain: `<path d="${CLOUD_HI}"/><path d="M9 17l-1 3M13 17l-1 3M17 17l-1 3"/>`,
+  snow: `<path d="${CLOUD_HI}"/><path d="M9 18h.01M13 18h.01M17 18h.01M11 21h.01M15 21h.01" stroke-width="2.6"/>`,
+  storm: `<path d="${CLOUD_HI}"/><path d="M13 14l-2.5 4h3L11 22"/>`,
+  alert: '<path d="M12 3L2 20.5h20L12 3z"/><path d="M12 10v5M12 17.8h.01"/>',
+};
+const svg = (name, width = 1.8) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${width}" ` +
+  `stroke-linecap="round" stroke-linejoin="round">${ICON[name]}</svg>`;
+function iconFor(code, isDay) {
+  if (code <= 1) return isDay ? 'sun' : 'moon';
+  if (code === 2) return isDay ? 'partSun' : 'partMoon';
+  if (code === 3) return 'cloud';
+  if (code === 45 || code === 48) return 'fog';
+  if (code >= 95) return 'storm';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+  return 'rain';
+}
+const hourLabel = d => CFG.clock24 ? String(d.getHours()).padStart(2, '0')
+  : d.toLocaleTimeString('en-US', { hour: 'numeric' }).replace(/\s/g, '');
+function renderWeather(w) {
+  if (!w || !w.hourly) return;
+  const c = w.current, d = w.daily, h = w.hourly;
+  $('weather').textContent = `${Math.round(c.temperature_2m)}° ${WMO[c.weather_code] || ''} · ` +
+    `H ${Math.round(d.temperature_2m_max[0])}° L ${Math.round(d.temperature_2m_min[0])}° · ` +
+    `${d.precipitation_probability_max[0] ?? 0}% rain`;
+  // Next six whole hours. Times arrive as local wall time ("2026-10-17T14:00"), same zone as the TV.
+  const now = Date.now();
+  const first = h.time.findIndex(t => new Date(t).getTime() > now);
+  let html = '';
+  for (let i = first; first >= 0 && i < first + 6 && i < h.time.length; i++) {
+    const pop = h.precipitation_probability[i];
+    html += `<div class="hr"><div class="h">${hourLabel(new Date(h.time[i]))}</div>` +
+      svg(iconFor(h.weather_code[i], h.is_day[i])) +
+      `<div>${Math.round(h.temperature_2m[i])}°</div><div class="p">${pop >= 20 ? pop + '%' : ''}</div></div>`;
+  }
+  $('hourly').innerHTML = html;
+  // Today's sunrise and sunset, or tomorrow's once today's sunset has passed.
+  const k = new Date(d.sunset[0]).getTime() > now ? 0 : 1;
+  if (d.sunrise[k]) $('sun').textContent = `Sunrise ${fmtTime(new Date(d.sunrise[k]))} · Sunset ${fmtTime(new Date(d.sunset[k]))}`;
+}
+async function loadWeather() {
+  if (CFG.lat == null) return;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${CFG.lat}&longitude=${CFG.lon}` +
+    `&current=temperature_2m,weather_code` +
+    `&hourly=temperature_2m,precipitation_probability,weather_code,is_day` +
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset` +
+    `&temperature_unit=${CFG.units === 'F' ? 'fahrenheit' : 'celsius'}&timezone=auto&forecast_days=2`;
+  try { const w = JSON.parse(await get(url)); store.set('weather:' + CFG.units, w); renderWeather(w); }
+  catch (e) { setTimeout(loadWeather, 60000); }
+}
+
+// ---------- NWS alerts (api.weather.gov, no key) ----------
+let alerts = [];
+const DEMO_ALERTS = [
+  { event: 'Tornado Warning', ends: new Date(Date.now() + 40 * 60000).toISOString(),
+    headline: 'Tornado Warning issued for Example County until 5:15 PM CDT by NWS' },
+  { event: 'Severe Thunderstorm Watch', ends: new Date(Date.now() + 5 * 3600000).toISOString(), headline: '' },
+  { event: 'Wind Advisory', ends: new Date(Date.now() + 26 * 3600000).toISOString(), headline: '' },
+];
+const alertKind = ev => /warning/i.test(ev) ? 'warning' : /watch/i.test(ev) ? 'watch' : 'advisory';
+const KIND_RANK = { warning: 0, watch: 1, advisory: 2 };
+function renderAlerts() {
+  const now = new Date();
+  const live = alerts.filter(a => !a.ends || new Date(a.ends) > now)
+    .sort((a, b) => KIND_RANK[alertKind(a.event)] - KIND_RANK[alertKind(b.event)]).slice(0, 3);
+  $('alerts').innerHTML = '';
+  for (const a of live) {
+    const kind = alertKind(a.event), end = a.ends && new Date(a.ends);
+    const sameDay = end && end.toDateString() === now.toDateString();
+    const div = document.createElement('div');
+    div.className = 'alert ' + kind;
+    div.innerHTML = svg('alert', 2) + '<div><div class="ev"></div><div class="when"></div><div class="hl"></div></div>';
+    div.querySelector('.ev').textContent = a.event;
+    div.querySelector('.when').textContent = end ? 'until ' + fmtTime(end) +
+      (sameDay ? '' : ' ' + end.toLocaleDateString('en-US', { weekday: 'short' })) : '';
+    // Only warnings get the headline; watches and advisories stay one line.
+    if (kind === 'warning' && a.headline) div.querySelector('.hl').textContent = a.headline;
+    else div.querySelector('.hl').remove();
+    $('alerts').append(div);
+  }
+  // A warning outranks night mode: bring the screen back up so it can be seen.
+  document.body.classList.toggle('alerting', live.some(a => alertKind(a.event) === 'warning'));
+  applyNight();
+}
+async function loadAlerts() {
+  if (CFG.demoAlerts) { alerts = DEMO_ALERTS; renderAlerts(); return; }
+  if (CFG.lat == null) return;
+  try {
+    const json = JSON.parse(await get(`https://api.weather.gov/alerts/active?point=${CFG.lat},${CFG.lon}`));
+    alerts = json.features.map(f => f.properties)
+      .filter(p => p.status === 'Actual' && p.messageType !== 'Cancel')
+      .map(p => ({ event: p.event, ends: p.ends || p.expires, headline: p.headline || '' }));
+    renderAlerts();
+  } catch (e) { console.log('alerts failed: ' + e.message.slice(0, 200)); }
+}
+
+// ---------- calendar (ICS) ----------
+const WIN_TZ = { 'Central Standard Time': 'America/Chicago', 'Eastern Standard Time': 'America/New_York',
+  'Mountain Standard Time': 'America/Denver', 'US Mountain Standard Time': 'America/Phoenix',
+  'Pacific Standard Time': 'America/Los_Angeles', 'Alaskan Standard Time': 'America/Anchorage',
+  'Hawaiian Standard Time': 'Pacific/Honolulu', 'GMT Standard Time': 'Europe/London',
+  'W. Europe Standard Time': 'Europe/Berlin', 'Romance Standard Time': 'Europe/Paris',
+  'Central Europe Standard Time': 'Europe/Budapest', 'China Standard Time': 'Asia/Shanghai',
+  'Tokyo Standard Time': 'Asia/Tokyo', 'India Standard Time': 'Asia/Kolkata', 'Korea Standard Time': 'Asia/Seoul',
+  'AUS Eastern Standard Time': 'Australia/Sydney', 'UTC': 'UTC', 'Coordinated Universal Time': 'UTC' };
+const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function ianaTz(tzid) {
+  if (!tzid) return null;
+  tzid = tzid.replace(/^"|"$/g, '');
+  if (WIN_TZ[tzid]) return WIN_TZ[tzid];
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tzid }); return tzid; } catch (e) { return null; }
+}
+const dtfCache = {};
+function tzOffsetMs(utcMs, tz) {
+  const f = dtfCache[tz] || (dtfCache[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  const p = {}; for (const x of f.formatToParts(new Date(utcMs))) p[x.type] = +x.value;
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - utcMs;
+}
+// Wall-clock fields in a zone -> Date.
+function wallToDate(y, mo, d, h, mi, s, tz) {
+  if (!tz) return new Date(y, mo, d, h, mi, s);
+  const guess = Date.UTC(y, mo, d, h, mi, s);
+  let t = guess - tzOffsetMs(guess, tz);
+  t = guess - tzOffsetMs(t, tz);
+  return new Date(t);
+}
+// Parse an ICS date value. Returns {date: Date, allDay, wall: {y,mo,d,h,mi,s}, tz}
+function parseDt(prop) {
+  if (!prop) return null;
+  const v = prop.value.trim();
+  const m = v.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+  if (!m) return null;
+  const wall = { y: +m[1], mo: +m[2] - 1, d: +m[3], h: +(m[4] || 0), mi: +(m[5] || 0), s: +(m[6] || 0) };
+  const allDay = !m[4];
+  let tz = null;
+  if (allDay) tz = null;
+  else if (m[7]) tz = 'UTC';
+  else tz = ianaTz(prop.params.TZID) || null;
+  return { date: wallToDate(wall.y, wall.mo, wall.d, wall.h, wall.mi, wall.s, tz), allDay, wall, tz };
+}
+function parseIcs(text) {
+  const lines = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
+  const events = []; let cur = null, depth = 0;
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') { cur = {}; depth = 0; continue; }
+    if (!cur) continue;
+    if (line.startsWith('BEGIN:')) { depth++; continue; }
+    if (line.startsWith('END:') && depth > 0) { depth--; continue; }
+    if (line === 'END:VEVENT') { events.push(cur); cur = null; continue; }
+    if (depth) continue;  // skip VALARM etc.
+    const i = line.search(/:/); if (i < 0) continue;
+    const head = line.slice(0, i), value = line.slice(i + 1);
+    const [name, ...ps] = head.split(';');
+    const params = {}; for (const p of ps) { const j = p.indexOf('='); params[p.slice(0, j).toUpperCase()] = p.slice(j + 1); }
+    const key = name.toUpperCase(), prop = { value, params };
+    if (key === 'EXDATE') (cur.EXDATE = cur.EXDATE || []).push(...value.split(',').map(x => ({ value: x, params })));
+    else cur[key] = prop;
+  }
+  return events;
+}
+const unescapeText = s => s.replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1');
+const DAY = 86400000;
+const dayNum = (y, mo, d) => Math.round(Date.UTC(y, mo, d) / DAY);  // days since epoch, zone-free
+const WD = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+// Does an RRULE starting on wall date `s` produce an occurrence on wall date `t`? (ignoring COUNT/UNTIL)
+function ruleHits(r, s, t) {
+  const sn = dayNum(s.y, s.mo, s.d), tn = dayNum(t.y, t.mo, t.d);
+  if (tn < sn) return false;
+  const iv = +(r.INTERVAL || 1);
+  const twd = new Date(Date.UTC(t.y, t.mo, t.d)).getUTCDay();
+  const byday = r.BYDAY ? r.BYDAY.split(',') : null;
+  const bymd = r.BYMONTHDAY ? r.BYMONTHDAY.split(',').map(Number) : null;
+  const bymo = r.BYMONTH ? r.BYMONTH.split(',').map(Number) : null;
+  if (bymo && !bymo.includes(t.mo + 1)) return false;
+  const daysInMonth = new Date(Date.UTC(t.y, t.mo + 1, 0)).getUTCDate();
+  const dayMatches = () => {
+    if (bymd) return bymd.some(n => n === t.d || (n < 0 && daysInMonth + n + 1 === t.d));
+    if (byday) return byday.some(b => {
+      const m = b.match(/^([+-]?\d+)?([A-Z]{2})$/); if (!m || WD.indexOf(m[2]) !== twd) return false;
+      if (!m[1]) return true;
+      const n = +m[1], nth = Math.floor((t.d - 1) / 7) + 1, fromEnd = Math.floor((daysInMonth - t.d) / 7) + 1;
+      return n > 0 ? n === nth : -n === fromEnd;
+    });
+    return null;
+  };
+  switch (r.FREQ) {
+    case 'DAILY': return (tn - sn) % iv === 0 && (!byday || byday.includes(WD[twd]));
+    case 'WEEKLY': {
+      const wkst = WD.indexOf(r.WKST || 'MO');
+      const swd = new Date(Date.UTC(s.y, s.mo, s.d)).getUTCDay();
+      const sw = sn - ((swd - wkst + 7) % 7), tw = tn - ((twd - wkst + 7) % 7);
+      if (((tw - sw) / 7) % iv !== 0) return false;
+      return byday ? byday.includes(WD[twd]) : twd === swd;
+    }
+    case 'MONTHLY': {
+      if (((t.y - s.y) * 12 + t.mo - s.mo) % iv !== 0) return false;
+      const dm = dayMatches(); return dm === null ? t.d === s.d : dm;
+    }
+    case 'YEARLY': {
+      if ((t.y - s.y) % iv !== 0) return false;
+      if (!bymo && t.mo !== s.mo) return false;
+      const dm = dayMatches(); return dm === null ? t.d === s.d : dm;
+    }
+  }
+  return false;
+}
+// Occurrences of an event that overlap local day [dStart, dStart+1d). Returns [{start,end,allDay,summary}]
+function occurrencesOn(ev, dStart, overrides) {
+  const st = parseDt(ev.DTSTART); if (!st) return [];
+  const en = parseDt(ev.DTEND);
+  let dur = en ? en.date - st.date : (st.allDay ? DAY : 0);
+  if (ev.DURATION && !en) {
+    const m = ev.DURATION.value.match(/P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?/);
+    if (m) dur = (((+m[1] || 0) * 7 + (+m[2] || 0)) * 24 * 60 + (+m[3] || 0) * 60 + (+m[4] || 0)) * 60000;
+  }
+  const dEnd = new Date(dStart.getTime() + DAY);
+  const summary = unescapeText(ev.SUMMARY ? ev.SUMMARY.value : '(No title)');
+  const mk = start => {
+    if (st.allDay) {
+      // All-day dates are floating: compare as local calendar dates.
+      const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      return { start: s, end: new Date(s.getTime() + Math.max(dur, DAY)), allDay: true, summary };
+    }
+    return { start, end: new Date(start.getTime() + dur), allDay: false, summary };
+  };
+  const overlaps = o => o.start < dEnd && (o.end > dStart || (o.end - o.start === 0 && o.start >= dStart));
+  if (!ev.RRULE) { const o = mk(st.date); return overlaps(o) ? [o] : []; }
+
+  const r = {}; for (const kv of ev.RRULE.value.split(';')) { const [k, v] = kv.split('='); r[k] = v; }
+  const until = r.UNTIL ? parseDt({ value: r.UNTIL, params: {} }) : null;
+  const ex = new Set((ev.EXDATE || []).map(x => { const p = parseDt(x); return p ? dayNum(p.wall.y, p.wall.mo, p.wall.d) : null; }));
+  const uid = ev.UID ? ev.UID.value : '';
+  const out = [];
+  // Check the target day and the day before (an occurrence starting yesterday may run into today).
+  for (const back of [1, 0]) {
+    const cand = new Date(dStart.getTime() - back * DAY + DAY / 2);
+    // Express the candidate day in the event's zone.
+    const tz = st.tz || LOCAL_TZ;
+    const local = new Date(cand.getTime() + tzOffsetMs(cand.getTime(), tz));
+    const t = { y: local.getUTCFullYear(), mo: local.getUTCMonth(), d: local.getUTCDate() };
+    if (!ruleHits(r, st.wall, t)) continue;
+    const tn = dayNum(t.y, t.mo, t.d);
+    if (ex.has(tn) || overrides.has(uid + '|' + tn)) continue;
+    const start = st.allDay ? new Date(t.y, t.mo, t.d) : wallToDate(t.y, t.mo, t.d, st.wall.h, st.wall.mi, st.wall.s, st.tz);
+    if (until && start > until.date) continue;
+    if (r.COUNT) {
+      let n = 0; const sn = dayNum(st.wall.y, st.wall.mo, st.wall.d);
+      for (let k = sn; k <= tn && n <= +r.COUNT; k++) {
+        const dd = new Date(k * DAY);
+        if (ruleHits(r, st.wall, { y: dd.getUTCFullYear(), mo: dd.getUTCMonth(), d: dd.getUTCDate() })) n++;
+      }
+      if (n > +r.COUNT) continue;
+    }
+    const o = mk(start); if (overlaps(o)) out.push(o);
+  }
+  return out;
+}
+function eventsForDay(allEvents, dStart) {
+  const overrides = new Set();
+  for (const ev of allEvents) if (ev['RECURRENCE-ID'] && ev.UID) {
+    const p = parseDt(ev['RECURRENCE-ID']); if (p) overrides.add(ev.UID.value + '|' + dayNum(p.wall.y, p.wall.mo, p.wall.d));
+  }
+  const out = [];
+  for (const ev of allEvents) {
+    if (ev.STATUS && ev.STATUS.value === 'CANCELLED') continue;
+    const evForDay = ev['RECURRENCE-ID'] ? Object.assign({}, ev, { RRULE: undefined }) : ev;
+    out.push(...occurrencesOn(evForDay, dStart, overrides));
+  }
+  const seen = new Set();
+  return out.filter(o => { const k = o.summary + o.start.getTime(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => (b.allDay - a.allDay) || (a.start - b.start));
+}
+let calEvents = null;
+function renderAgenda() {
+  const box = $('events');
+  if (!CFG.icsUrls.length && !CFG.demoEvents) { $('agenda').style.display = 'none'; return; }
+  if (!calEvents) return;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let label = 'Today', list = eventsForDay(calEvents, today);
+  const upcoming = list.filter(o => o.allDay || o.end > now);
+  // Nothing left today: look ahead to the next day that has something on it.
+  for (let i = 1; !upcoming.length && i <= 7; i++) {
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+    const next = eventsForDay(calEvents, day);
+    if (next.length) {
+      label = i === 1 ? 'Tomorrow' : day.toLocaleDateString('en-US', { weekday: 'long' });
+      list = next; break;
+    }
+  }
+  // Keep at most 7 rows, dropping finished events first.
+  while (list.length > 7) { const i = list.findIndex(o => !o.allDay && o.end <= now); list.splice(i >= 0 ? i : list.length - 1, 1); }
+  $('agendaLabel').textContent = label;
+  box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="s" style="grid-column:1/3;color:var(--dim)">Nothing scheduled</div>'; return; }
+  for (const o of list) {
+    const cls = label === 'Today' && !o.allDay ? (o.end <= now ? 'past' : (o.start <= now ? 'now' : '')) : '';
+    const t = document.createElement('div'); t.className = 't ' + cls;
+    t.textContent = o.allDay ? 'All day' : cls === 'now' ? 'Now' : fmtTime(o.start);
+    const s = document.createElement('div'); s.className = 's ' + cls; s.textContent = o.summary;
+    if (cls === 'now') {
+      const u = document.createElement('span'); u.className = 'until'; u.textContent = 'until ' + fmtTime(o.end);
+      s.append(u);
+    }
+    box.append(t, s);
+  }
+}
+// Placeholder agenda for screenshots, laid out around the current time so it always
+// shows one finished event, one in progress and a few to come.
+function demoIcs() {
+  const p = n => String(n).padStart(2, '0');
+  const stamp = d => `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+  const now = new Date(), base = new Date(now); base.setMinutes(now.getMinutes() < 30 ? 0 : 30, 0, 0);
+  const at = (min, len, title) => [new Date(base.getTime() + min * 60000), new Date(base.getTime() + (min + len) * 60000), title];
+  const ev = [at(-240, 30, 'Morning run'), at(0, 60, 'Lunch with Sam'), at(150, 30, 'Call with the plumber'),
+    at(330, 120, 'Movie night')];
+  const ymd = stamp(now).slice(0, 8);
+  return 'BEGIN:VCALENDAR\n' +
+    `BEGIN:VEVENT\nUID:demo-all\nDTSTART;VALUE=DATE:${ymd}\nSUMMARY:Farmers market\nEND:VEVENT\n` +
+    ev.map(([a, b, t], i) => `BEGIN:VEVENT\nUID:demo${i}\nDTSTART:${stamp(a)}\nDTEND:${stamp(b)}\nSUMMARY:${t}\nEND:VEVENT`).join('\n') +
+    '\nEND:VCALENDAR';
+}
+async function loadCalendar() {
+  if (CFG.demoEvents) { calEvents = parseIcs(demoIcs()); return renderAgenda(); }
+  if (!CFG.icsUrls.length) return renderAgenda();
+  const texts = await Promise.all(CFG.icsUrls.map(u => get(u.replace(/^webcal:/, 'https:')).catch(() => null)));
+  if (texts.some(t => t && t.includes('BEGIN:VCALENDAR'))) {
+    calEvents = texts.filter(Boolean).flatMap(parseIcs);
+    store.set('ics', texts.filter(Boolean));
+  }
+  renderAgenda();
+}
+
+// ---------- photos ----------
+// Bing mixes in art and museum pieces; keep scenery.
+const NOT_SCENERY = /fossil|painting|cave art|mural|replica|sculpture|statue|museum|artwork|mosaic|exhibit/i;
+const THEME_TTL = 6 * 3600000;
+let photos = [], photoIdx = Math.floor(Math.random() * 1000), layer = 0, slot = -1;
+function currentSlot() {
+  const h = new Date().getHours(), t = CFG.themes;
+  let k = t.length - 1;  // before the first slot's hour, the last slot carries over from last night
+  for (let i = 0; i < t.length; i++) if (h >= t[i].from) k = i;
+  return k;
+}
+const slotKey = k => UNSPLASH ? 'photos:' + k : 'photos:bing';
+async function fetchPhotos(k) {
+  if (UNSPLASH) {
+    const qs = CFG.themes[k].queries, q = qs[Math.floor(Math.random() * qs.length)];
+    const json = JSON.parse(await get(`https://api.unsplash.com/photos/random?count=30&orientation=landscape` +
+      `&content_filter=high&query=${encodeURIComponent(q)}&client_id=${CFG.unsplashKey}`));
+    return json.map(p => ({
+      url: `${p.urls.raw}&w=1920&h=1080&fit=crop&q=85`,
+      place: (p.location && (p.location.name || [p.location.city, p.location.country].filter(Boolean).join(', '))) || '',
+      credit: `${p.user.name} / Unsplash`,
+    }));
+  }
+  const json = JSON.parse(await get('https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US'));
+  return json.images.map(i => {
+    const cr = i.copyright || '', m = cr.match(/^(.*?)\s*\((©.*)\)\s*$/);
+    return { url: 'https://www.bing.com' + i.urlbase + '_1920x1080.jpg', place: m ? m[1] : cr, credit: m ? m[2] : '' };
+  }).filter(p => !NOT_SCENERY.test(p.place));
+}
+// Switch to the current time-of-day slot, fetching its photos if the cache is missing or stale.
+async function loadPhotos() {
+  const k = currentSlot(), cached = store.get(slotKey(k));
+  if (k !== slot && cached && cached.list.length) { slot = k; photos = cached.list; }
+  if (cached && Date.now() - cached.at < THEME_TTL) return;
+  try {
+    const list = await fetchPhotos(k);
+    if (list.length) { store.set(slotKey(k), { at: Date.now(), list }); if (currentSlot() === k) { slot = k; photos = list; } }
+  } catch (e) {
+    console.log('photos failed: ' + e.message.slice(0, 300));
+    if (!photos.length) return new Promise(r => setTimeout(r, 30000)).then(loadPhotos);
+  }
+}
+let showing = false;
+async function showPhoto() {
+  if (!photos.length || showing || isNight()) return;
+  showing = true;
+  const p = photos[photoIdx++ % photos.length];
+  try {
+    const src = await localImage(p.url);
+    await new Promise((res, rej) => { const img = new Image(); img.onload = res; img.onerror = rej; img.src = src; });
+    const next = $('bg' + (layer ^ 1)), prev = $('bg' + layer);
+    next.style.backgroundImage = `url("${src}")`;
+    next.classList.remove('on'); void next.offsetWidth; next.classList.add('on');
+    prev.classList.remove('on');
+    layer ^= 1;
+    $('place').textContent = p.place; $('credit').textContent = p.credit;
+  } catch (e) {
+    console.log('photo failed: ' + p.url + ' ' + (e && e.message || e));
+    // Network on this TV drops out briefly; retry soon rather than sit on a black screen.
+    if (!document.querySelector('.bg.on')) setTimeout(showPhoto, 15000);
+  } finally { showing = false; }
+  // Warm the cache for the next one so the crossfade never waits on the network.
+  localImage(photos[photoIdx % photos.length].url).catch(() => {});
+}
+
+// ---------- night ----------
+function isNight() {
+  if (CFG.forceNight) return true;
+  if (CFG.night === 'off') return false;
+  const h = new Date().getHours(), [a, b] = CFG.night.split('-').map(Number);
+  return a > b ? (h >= a || h < b) : (h >= a && h < b);
+}
+function applyNight() {
+  const night = isNight() && !document.body.classList.contains('alerting');
+  const was = document.body.classList.contains('night');
+  document.body.classList.toggle('night', night);
+  if (was && !night) showPhoto();  // morning: bring a photo back right away
+}
+
+// Nudge the overlay now and then so static text never sits in one spot for hours.
+// At night only the clock is up, so it wanders further.
+function shiftUi() {
+  const r = document.body.classList.contains('night') ? 4 : 0.6;
+  const dx = (Math.random() * 2 - 1) * r, dy = (Math.random() * 2 - 1) * r * 0.8;
+  $('ui').style.transform = `translate(${dx}vw, ${dy}vw)`;
+}
+
+// ---------- settings menu (app only; the screensaver takes no input) ----------
+const MENU = [
+  { key: 'units', label: 'Temperature', options: [['C', '°C'], ['F', '°F']] },
+  { key: 'clock24', label: 'Clock', options: [[false, '12-hour'], [true, '24-hour']] },
+  { key: 'photoSource', label: 'Photos', options: [['unsplash', CFG.unsplashKey ? 'Unsplash' : 'Unsplash (no key set)'],
+    ['bing', 'Bing photo of the day']] },
+  { key: 'photoSeconds', label: 'Change photo every', options: [[30, '30 seconds'], [60, '1 minute'], [120, '2 minutes'], [300, '5 minutes']] },
+  { key: 'night', label: 'Night mode', options: [['23-6', '11 PM – 6 AM'], ['22-6', '10 PM – 6 AM'], ['0-7', '12 AM – 7 AM'], ['off', 'Off']] },
+];
+let sel = 0, draft = null;
+function drawMenu() {
+  $('rows').innerHTML = '';
+  MENU.forEach((m, i) => {
+    const opt = m.options.find(o => o[0] === draft[m.key]) || m.options[0];
+    const row = document.createElement('div');
+    row.className = 'row' + (i === sel ? ' sel' : '');
+    row.innerHTML = '<span></span><span class="val"></span>';
+    row.firstChild.textContent = m.label; row.lastChild.textContent = opt[1];
+    $('rows').append(row);
+  });
+}
+function openMenu() {
+  draft = {}; for (const m of MENU) draft[m.key] = CFG[m.key];
+  sel = 0; drawMenu(); $('menu').hidden = false; $('hint').hidden = true;
+}
+function step(dir) {
+  const m = MENU[sel], i = m.options.findIndex(o => o[0] === draft[m.key]);
+  draft[m.key] = m.options[(Math.max(i, 0) + dir + m.options.length) % m.options.length][0];
+  drawMenu();
+}
+// Called by the activity on BACK; true means the menu took it.
+window.__back = () => {
+  if ($('menu').hidden) return false;
+  $('menu').hidden = true;
+  if (MENU.some(m => draft[m.key] !== CFG[m.key])) {
+    Android.saveSettings(JSON.stringify(Object.assign(readCfg('settings'), draft)));
+    location.reload();
+  }
+  return true;
+};
+if (window.Android && Android.interactive()) {
+  document.addEventListener('keydown', e => {
+    if ($('menu').hidden) {
+      if (e.key === 'Enter' || e.key === 'ContextMenu') { openMenu(); e.preventDefault(); }
+      return;
+    }
+    const k = e.key;
+    if (k === 'ArrowUp') sel = (sel + MENU.length - 1) % MENU.length;
+    else if (k === 'ArrowDown') sel = (sel + 1) % MENU.length;
+    else if (k === 'ArrowLeft') return step(-1), e.preventDefault();
+    else if (k === 'ArrowRight' || k === 'Enter') return step(1), e.preventDefault();
+    else return;
+    e.preventDefault(); drawMenu();
+  });
+  $('hint').hidden = false;
+  setTimeout(() => { $('hint').style.opacity = 0; }, 6000);
+}
+
+// ---------- boot ----------
+renderWeather(store.get('weather:' + CFG.units));
+const cachedIcs = store.get('ics'); if (cachedIcs) calEvents = cachedIcs.flatMap(parseIcs);
+applyNight(); tickClock(); renderAgenda();
+loadPhotos().then(() => { if (!document.querySelector('.bg.on')) showPhoto(); });
+if (photos.length) showPhoto();
+setInterval(tickClock, 1000);
+setInterval(() => { renderAgenda(); applyNight(); renderAlerts(); }, 60 * 1000);
+setInterval(showPhoto, CFG.photoSeconds * 1000);
+setInterval(shiftUi, 5 * 60 * 1000);
+setInterval(loadPhotos, 10 * 60 * 1000);  // cheap unless the slot changed or its cache went stale
+loadWeather(); setInterval(loadWeather, 15 * 60 * 1000);
+loadCalendar(); setInterval(loadCalendar, 10 * 60 * 1000);
+// Every 2 minutes: a warning is the one thing on this screen where minutes matter.
+loadAlerts(); setInterval(loadAlerts, 2 * 60 * 1000);
+</script>
+</body>
+</html>
