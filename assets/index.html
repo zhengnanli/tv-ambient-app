@@ -645,8 +645,11 @@ if (window.Android && Android.interactive()) {
     else return;
     e.preventDefault(); drawMenu();
   });
-  $('hint').hidden = false;
-  setTimeout(() => { $('hint').style.opacity = 0; }, 6000);
+  if (location.hash === '#settings') openMenu();  // OK pressed in the screensaver
+  else {
+    $('hint').hidden = false;
+    setTimeout(() => { $('hint').style.opacity = 0; }, 6000);
+  }
 }
 
 // ---------- boot ----------

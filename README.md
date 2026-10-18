@@ -55,9 +55,9 @@ installing one signed with another key.
 
 ## Settings
 
-Open **Ambient Dashboard** from the Apps row and press **OK** on the remote: temperature
-unit, 12/24-hour clock, photo source, photo interval and night-mode hours. **BACK** saves.
-The screensaver itself takes no input (any button closes it), so the menu lives in the app.
+Press **OK** on the remote while the screensaver is up, or open **Ambient Dashboard** from
+the Apps row and press **OK**: temperature unit, 12/24-hour clock, photo source, photo
+interval and night-mode hours. **BACK** saves. Any other button just closes the screensaver.
 
 Everything else (Unsplash themes, defaults) is in the `DEFAULTS` block at the top of
 `assets/index.html`. Precedence: `DEFAULTS` < `config.json` < menu < `debug.json`.

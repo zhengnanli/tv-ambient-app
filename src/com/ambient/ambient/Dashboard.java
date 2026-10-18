@@ -27,8 +27,11 @@ import java.util.concurrent.Executors;
 final class Dashboard {
     private Dashboard() {}
 
-    /** interactive: the launchable app, where the remote can open the settings menu. */
-    static WebView create(Context ctx, boolean interactive) {
+    /**
+     * interactive: the launchable app, where the remote can open the settings menu.
+     * settings: start with that menu open.
+     */
+    static WebView create(Context ctx, boolean interactive, boolean settings) {
         WebView web = new WebView(ctx);
         web.setBackgroundColor(Color.BLACK);
         WebSettings s = web.getSettings();
@@ -44,7 +47,7 @@ final class Dashboard {
             }
         });
         web.addJavascriptInterface(new Bridge(ctx, web, interactive), "Android");
-        web.loadUrl("file:///android_asset/index.html");
+        web.loadUrl("file:///android_asset/index.html" + (settings ? "#settings" : ""));
         return web;
     }
 

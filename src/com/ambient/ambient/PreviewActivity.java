@@ -7,13 +7,16 @@ import android.webkit.WebView;
 
 /** Launchable copy of the screensaver. OK on the remote opens the settings menu. */
 public class PreviewActivity extends Activity {
+    /** Open with the settings menu already up (OK pressed in the screensaver). */
+    static final String EXTRA_SETTINGS = "settings";
+
     private WebView web;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        web = Dashboard.create(this, true);
+        web = Dashboard.create(this, true, getIntent().getBooleanExtra(EXTRA_SETTINGS, false));
         setContentView(web);
     }
 
